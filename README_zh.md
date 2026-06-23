@@ -1,5 +1,7 @@
 # UWB-TWHP 后处理工具链
 
+[English version](README.md)
+
 **UWB-TWHP**（Ultra-Wideband Through-Wall Human Pose，超宽带穿墙人体姿态）数据集的后处理流水线。该工具链读取原始雷达回波和光学动作捕捉数据，经过对齐、清洗后，生成结构化的 `.mat` 数据集文件，可直接用于穿墙场景下的人体姿态估计模型训练。
 
 ## 功能概览
