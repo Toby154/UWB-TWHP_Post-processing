@@ -22,6 +22,7 @@
 ```
 .
 ├── dataset_build.m                    # 主入口 — 编排完整流水线
+├── dataset_visualizer.m               # 交互式 MAT 数据集可视化工具
 ├── gen_range_data_complex.m           # 距离像生成（FFT + 穿墙补偿）
 ├── read_NOV.m                         # 二进制 .NOV 文件读取器（FMCW 雷达 ADC 数据）
 ├── NOKOV_json_read.m                  # NOKOV JSON 动捕数据解析（16 关节点骨架）
@@ -104,6 +105,18 @@ NOKOV .json ──► NOKOV_json_read() ──► 关节点坐标 ────�
 | `FolderRoot`      | 原始输入数据的根目录                   |
 
 ## 使用步骤
+
+### 数据集可视化
+
+在 MATLAB 中运行：
+
+```matlab
+dataset_visualizer
+```
+
+点击 **Select MAT File** 选择已生成的数据集 `.mat` 文件。界面会显示整段时间-距离图、当前帧雷达实部、当前帧雷达虚部、三维人体姿态和每个人的动作标签，并提供播放、暂停、上一帧、下一帧和滑块跳转功能。
+
+### 数据集生成
 
 1. **检查校准文件** — 确保 `data_info.mat` 和 `buchang_tieqiang_8m_wall.mat` 存在且参数正确。
 2. **配置路径参数** — 在 `dataset_build.m` 中设置 `FolderRoot` 和各 `pathSave_*` 变量。

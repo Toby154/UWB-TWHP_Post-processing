@@ -22,6 +22,7 @@ The pipeline performs the following steps end-to-end:
 ```
 .
 ├── dataset_build.m                    # Main entry point — orchestrates the full pipeline
+├── dataset_visualizer.m               # Interactive MAT dataset viewer
 ├── gen_range_data_complex.m           # Range-profile generation (FFT + through-wall compensation)
 ├── read_NOV.m                         # Binary .NOV file reader (FMCW radar ADC data)
 ├── NOKOV_json_read.m                  # NOKOV JSON mocap parser (16-joint skeleton)
@@ -104,6 +105,18 @@ Edit the following variables at the top of `dataset_build.m` before running:
 | `FolderRoot`      | Root directory of the raw input data                         |
 
 ## Usage
+
+### Dataset Visualization
+
+Run the interactive viewer in MATLAB:
+
+```matlab
+dataset_visualizer
+```
+
+Click **Select MAT File** to load a generated dataset file. The viewer shows the full range-time map, the selected frame's real and imaginary radar data, the 3D skeleton, and per-person action labels. Playback, pause, previous-frame, next-frame, and slider controls are available in the top control bar.
+
+### Dataset Generation
 
 1. **Verify calibration files** — Ensure `data_info.mat` and `buchang_tieqiang_8m_wall.mat` are present and contain the correct system parameters.
 2. **Configure paths** — Set `FolderRoot` and `pathSave_*` variables in `dataset_build.m`.
