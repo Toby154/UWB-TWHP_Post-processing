@@ -13,6 +13,8 @@ state.numPeople = 0;
 state.rangeAxis = [];
 state.rangeAxisLabel = 'Range Bin';
 state.rangeTimeDb = [];
+state.dopplerWindowLength = 64;
+state.spectrumDynamicRangeDb = 40;
 state.timer = [];
 state.isPlaying = false;
 state.frameMarker = [];
@@ -122,7 +124,7 @@ statusText = uicontrol(controlPanel, ...
 
 axRangeTime = axes('Parent', fig, ...
     'Units', 'normalized', ...
-    'Position', [0.06, 0.55, 0.43, 0.32]);
+    'Position', [0.06, 0.67, 0.43, 0.20]);
 title(axRangeTime, 'Range-Time Map');
 xlabel(axRangeTime, 'Frame Index');
 ylabel(axRangeTime, state.rangeAxisLabel);
@@ -130,21 +132,36 @@ grid(axRangeTime, 'on');
 
 axReal = axes('Parent', fig, ...
     'Units', 'normalized', ...
-    'Position', [0.56, 0.55, 0.18, 0.32]);
+    'Position', [0.56, 0.67, 0.18, 0.20]);
 title(axReal, 'Current Frame Real');
 xlabel(axReal, 'Channel');
 ylabel(axReal, 'Range Bin');
 
 axImag = axes('Parent', fig, ...
     'Units', 'normalized', ...
-    'Position', [0.79, 0.55, 0.18, 0.32]);
+    'Position', [0.79, 0.67, 0.18, 0.20]);
 title(axImag, 'Current Frame Imag');
 xlabel(axImag, 'Channel');
 ylabel(axImag, 'Range Bin');
 
+axRangeSpectrum = axes('Parent', fig, ...
+    'Units', 'normalized', ...
+    'Position', [0.06, 0.37, 0.43, 0.20]);
+title(axRangeSpectrum, 'Range Spectrum');
+xlabel(axRangeSpectrum, state.rangeAxisLabel);
+ylabel(axRangeSpectrum, 'Relative Power (dB)');
+grid(axRangeSpectrum, 'on');
+
+axDopplerSpectrum = axes('Parent', fig, ...
+    'Units', 'normalized', ...
+    'Position', [0.56, 0.37, 0.41, 0.20]);
+title(axDopplerSpectrum, 'Doppler Spectrum');
+xlabel(axDopplerSpectrum, 'Doppler Frequency (cycles / saved frame)');
+ylabel(axDopplerSpectrum, state.rangeAxisLabel);
+
 axSkeleton = axes('Parent', fig, ...
     'Units', 'normalized', ...
-    'Position', [0.06, 0.10, 0.43, 0.34]);
+    'Position', [0.06, 0.07, 0.43, 0.20]);
 title(axSkeleton, 'Skeleton');
 xlabel(axSkeleton, 'X');
 ylabel(axSkeleton, 'Y');
@@ -157,7 +174,7 @@ actionPanel = uipanel( ...
     'Parent', fig, ...
     'Title', 'Action Labels', ...
     'Units', 'normalized', ...
-    'Position', [0.56, 0.10, 0.41, 0.34], ...
+    'Position', [0.56, 0.07, 0.41, 0.20], ...
     'BackgroundColor', 'w');
 
 actionText = uicontrol(actionPanel, ...
@@ -231,7 +248,8 @@ state.timer = timer( ...
         state.numFrames = min([realInfo.size(3), jointInfo.size(3), actionInfo.size(end)]);
         state.currentFrame = 1;
 
-        [state.rangeAxis, state.rangeAxisLabel] = loadRangeAxis(state.numRangeBins);
+        [state.rangeAxis, state.rangeAxisLabel] = loadRangeAxis( ...
+            filePath, state.numRangeBins, varNames);
         state.rangeTimeDb = buildRangeTimeMap();
         state.actionData = state.matObj.action(:, :, 1:state.numFrames);
         if ismember('conf', varNames)
@@ -307,6 +325,7 @@ state.timer = timer( ...
         end
 
         plotCurrentRadarFrame(frameIndex);
+        plotDopplerSpectrum(frameIndex);
         plotCurrentSkeleton(frameIndex);
         updateActionText(frameIndex);
         drawnow limitrate;
@@ -329,6 +348,71 @@ state.timer = timer( ...
         xlabel(axImag, 'Channel');
         ylabel(axImag, state.rangeAxisLabel);
         colorbar(axImag);
+
+        % MAT data are already range-compressed; average channel power without
+        % coherently summing channels, which could cancel different phases.
+        rangePower = mean(double(radarReal).^2 + double(radarImag).^2, 2);
+        plot(axRangeSpectrum, state.rangeAxis, relativePowerDb(rangePower), ...
+            'LineWidth', 1.5);
+        title(axRangeSpectrum, sprintf('Range Spectrum, Frame %d', frameIndex));
+        xlabel(axRangeSpectrum, state.rangeAxisLabel);
+        ylabel(axRangeSpectrum, 'Relative Power (dB)');
+        ylim(axRangeSpectrum, [-state.spectrumDynamicRangeDb, 0]);
+        grid(axRangeSpectrum, 'on');
+    end
+
+    function plotDopplerSpectrum(frameIndex)
+        windowLength = min(state.dopplerWindowLength, state.numFrames);
+        if windowLength < 2
+            cla(axDopplerSpectrum);
+            title(axDopplerSpectrum, 'Doppler Spectrum: at least 2 frames required');
+            return;
+        end
+
+        % Keep a full window near the clip boundaries; elsewhere center it on
+        % the selected frame. Dimensions are range x channel x slow time.
+        frameStart = max(1, min(frameIndex - floor(windowLength / 2), ...
+            state.numFrames - windowLength + 1));
+        frameEnd = frameStart + windowLength - 1;
+        radarReal = state.matObj.radar_data_real(:, :, frameStart:frameEnd);
+        radarImag = state.matObj.radar_data_imag(:, :, frameStart:frameEnd);
+        radarWindow = complex(double(radarReal), double(radarImag));
+
+        % Remove static clutter, then apply a periodic Hann window along slow
+        % time. The explicit formula needs no Signal Processing Toolbox.
+        radarWindow = bsxfun(@minus, radarWindow, mean(radarWindow, 3));
+        hannWindow = 0.5 - 0.5 * cos(2 * pi * (0:windowLength - 1) / windowLength);
+        radarWindow = bsxfun(@times, radarWindow, reshape(hannWindow, 1, 1, []));
+        fftLength = 2^nextpow2(windowLength);
+        dopplerResponse = fftshift(fft(radarWindow, fftLength, 3), 3);
+        dopplerPower = reshape(mean(abs(dopplerResponse).^2, 2), ...
+            state.numRangeBins, fftLength);
+
+        % Saved clips omit timestamps and may have dropped frames. Use cycles
+        % per saved frame rather than assuming a physical sampling rate in Hz.
+        dopplerAxis = (-floor(fftLength / 2):ceil(fftLength / 2) - 1) / fftLength;
+        imagesc(axDopplerSpectrum, dopplerAxis, state.rangeAxis, ...
+            relativePowerDb(dopplerPower));
+        set(axDopplerSpectrum, 'YDir', 'normal');
+        title(axDopplerSpectrum, sprintf('Doppler Spectrum, Frames %d-%d', ...
+            frameStart, frameEnd));
+        xlabel(axDopplerSpectrum, 'Doppler Frequency (cycles / saved frame)');
+        ylabel(axDopplerSpectrum, state.rangeAxisLabel);
+        colormap(axDopplerSpectrum, selectColormap());
+        set(axDopplerSpectrum, 'CLim', [-state.spectrumDynamicRangeDb, 0]);
+        colorbar(axDopplerSpectrum);
+    end
+
+    function powerDb = relativePowerDb(power)
+        % Each spectrum uses its own peak as 0 dB and a fixed display floor.
+        % An all-zero signal stays at the floor instead of showing a false peak.
+        peakPower = max(power(:));
+        if peakPower == 0
+            powerDb = -state.spectrumDynamicRangeDb * ones(size(power));
+        else
+            powerDb = 10 * log10(max(power / peakPower, ...
+                10^(-state.spectrumDynamicRangeDb / 10)));
+        end
     end
 
     function plotCurrentSkeleton(frameIndex)
@@ -473,42 +557,43 @@ state.timer = timer( ...
             minValues(3) - padding(3), maxValues(3) + padding(3)];
     end
 
-    function [rangeAxis, axisLabel] = loadRangeAxis(numRangeBins)
-        dataInfoFile = fullfile(fileparts(mfilename('fullpath')), 'data_info.mat');
-        if exist(dataInfoFile, 'file') ~= 2
-            rangeAxis = (1:numRangeBins).';
-            axisLabel = 'Range Bin';
-            return;
+    function [rangeAxis, axisLabel] = loadRangeAxis(filePath, numRangeBins, varNames)
+        rangeAxis = (1:numRangeBins).';
+        axisLabel = 'Range Bin';
+        % Prefer the embedded metre-valued range vector. Older files use the
+        % public CSV lookup, so the viewer never needs local provenance files.
+        if ismember('range_bin', varNames)
+            rangeAxis = state.matObj.range_bin;
+        else
+            mappingDir = fullfile(fileparts(mfilename('fullpath')), 'range_mapping');
+            lookupFile = fullfile(mappingDir, 'file_range_lookup.csv');
+            if ~isfile(lookupFile)
+                return;
+            end
+            lookup = readtable(lookupFile, 'Delimiter', ',', ...
+                'TextType', 'string', 'VariableNamingRule', 'preserve');
+            fileName = getFileName(filePath);
+            % Match the complete trial identifier, shared by full/train/test files.
+            trialKey = regexprep(string(fileName), '(_train|_test)?\.mat$', '');
+            rows = find(lookup.file_name == trialKey);
+            if isempty(rows)
+                return;
+            end
+            if numel(rows) ~= 1
+                error('Range lookup contains duplicate trial identifiers: %s.', trialKey);
+            end
+            axisFile = lookup.range_axis_file(rows);
+            if ismissing(axisFile) || strlength(axisFile) == 0
+                return;
+            end
+            rangeAxis = readmatrix(fullfile(mappingDir, axisFile));
         end
-
-        loadedInfo = load(dataInfoFile, 'data_info');
-        if ~isfield(loadedInfo, 'data_info')
-            rangeAxis = (1:numRangeBins).';
-            axisLabel = 'Range Bin';
-            return;
+        if ~isvector(rangeAxis) || numel(rangeAxis) ~= numRangeBins || ...
+                any(~isfinite(rangeAxis(:))) || any(diff(rangeAxis(:)) <= 0)
+            error('Range axis must contain %d increasing finite distances; got %d values.', ...
+                numRangeBins, numel(rangeAxis));
         end
-
-        dataInfo = loadedInfo.data_info;
-        if ~isfield(dataInfo, 'B') || ~isfield(dataInfo, 'PRT') || ~isfield(dataInfo, 'fs')
-            rangeAxis = (1:numRangeBins).';
-            axisLabel = 'Range Bin';
-            return;
-        end
-
-        c = 3e8;
-        fftNumber = 102400;
-        rangeFftStart = 401;
-        rangeFftStep = 2;
-        rangeFftIndices = rangeFftStart + rangeFftStep * (0:numRangeBins - 1);
-        fullRangeAxis = linspace(0, c * dataInfo.fs * dataInfo.PRT / dataInfo.B, fftNumber);
-
-        if max(rangeFftIndices) > numel(fullRangeAxis)
-            rangeAxis = (1:numRangeBins).';
-            axisLabel = 'Range Bin';
-            return;
-        end
-
-        rangeAxis = fullRangeAxis(rangeFftIndices).';
+        rangeAxis = rangeAxis(:);
         axisLabel = 'Bistatic Range (m)';
     end
 
@@ -558,6 +643,8 @@ state.timer = timer( ...
         cla(axRangeTime);
         cla(axReal);
         cla(axImag);
+        cla(axRangeSpectrum);
+        cla(axDopplerSpectrum);
         cla(axSkeleton);
         set(actionText, 'String', 'No MAT file loaded.');
         set(frameText, 'String', 'Frame: - / -');

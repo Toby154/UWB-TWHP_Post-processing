@@ -27,6 +27,10 @@ The pipeline performs the following steps end-to-end:
 .
 ├── dataset_build.m                    # Main entry point — orchestrates the full pipeline
 ├── dataset_visualizer.m               # Interactive MAT dataset viewer
+├── dataset_splitter.m                 # Bilingual dataset splitting wizard
+├── +dataset_split/                    # Inventory, split planning, and chunked generation
+├── add_range_bin_to_mat.m             # Append distance vectors to existing MAT files
+├── range_mapping/                     # Distance tables and per-file lookup
 ├── gen_range_data_complex.m           # Range-profile generation (FFT + through-wall compensation)
 ├── read_NOV.m                         # Binary .NOV file reader (FMCW radar ADC data)
 ├── NOKOV_json_read.m                  # NOKOV JSON mocap parser (16-joint skeleton)
@@ -118,7 +122,26 @@ Run the interactive viewer in MATLAB:
 dataset_visualizer
 ```
 
-Click **Select MAT File** to load a generated dataset file. The viewer shows the full range-time map, the selected frame's real and imaginary radar data, the 3D skeleton, and per-person action labels. Playback, pause, previous-frame, next-frame, and slider controls are available in the top control bar.
+Click **Select MAT File** to load a generated dataset file. The viewer shows the full range-time map, the selected frame's real and imaginary radar data, the range spectrum, the range-Doppler spectrum, the 3D skeleton, and per-person action labels. Playback, pause, previous-frame, next-frame, and slider controls are available in the top control bar.
+
+- **Range spectrum**: Channel-averaged power at each range bin in the selected frame, normalized to that frame's peak in dB. The data are already range-compressed, so no additional range FFT is applied.
+- **Doppler spectrum**: Up to 64 complex range-profile frames around the selected frame are mean-subtracted, Hann-windowed, and transformed along slow time. The range-Doppler map shows channel-averaged power relative to the window's peak. Both spectra use a 40 dB display range.
+- The Doppler axis uses cycles per saved frame. Output files omit original timestamps and may have abnormal frames removed, so the spectrum assumes equally spaced saved frames and cannot directly provide Hz or velocity. Doppler processing requires at least two frames.
+- Range axes use the MAT variable `range_bin` when present, otherwise the public trial-identifier lookup. Unlisted trials use range-bin indices.
+
+### Range Mapping
+
+Find the complete trial identifier in `range_mapping/file_range_lookup.csv`. The `file_name` column omits `_train`, `_test`, and the `.mat` extension: `N1_H0_A0_C1` matches `N1_H0_A0_C1_train.mat`, `N1_H0_A0_C1_test.mat`, and `N1_H0_A0_C1.mat`. Matching preserves the complete C number, so `C1` does not match `C10`. Each trial has one row. Its `range_axis_file` identifies the distance table in the same directory: a 512-by-1 column vector of bistatic total-path distances in metres.
+
+### Dataset Re-splitting
+
+```matlab
+dataset_splitter
+```
+
+Choose a language, source directory, output directory, and speed level. Higher levels preload more trials within a memory budget and reuse each trial's data for training and test output. The budget is automatically capped by available memory; trials exceeding the budget use block reads and writes. Split by frame ratio, subject, or trial, or restore complete trials. Original fragments are joined in `train → test` order. Overwrite replaces the source without backups. When checked, `range_bin` is saved together with each output file. All outputs remain compressed v7.3 MAT files.
+
+Real numeric and logical frame arrays use lossless HDF5 shuffle and deflate compression to reduce compression time. Outputs matching an entire original fragment are copied without re-encoding. Directory layout, MAT variable names, data types, and frame order follow the existing conventions, with MATLAB `load` and `matfile` access preserved. Complex arrays retain the original MATLAB saving path.
 
 ### Dataset Generation
 
